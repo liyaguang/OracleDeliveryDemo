@@ -16,7 +16,7 @@ public class SimpleLPTest {
 	public static void main(String[] args) throws IOException {
 		// TODO Auto-generated method stub
 		try {
-//			LPTest1();
+			// LPTest1();
 			deliveryMIPTest();
 		} catch (IloException e) {
 			// TODO Auto-generated catch block
@@ -103,9 +103,9 @@ public class SimpleLPTest {
 
 	public static void deliveryMIPTest() throws IloException, IOException {
 		double[][] T = DataRetrievalTest.getDistArray();
-		int N = T.length;
+		int N = 8;
 		int TN = 30; // Time period number
-		double f = 15; // time peroid length
+		double f = 15; // time period length
 		double P = 50; // penalty
 		double B = 1e10;
 		double[] S = new double[N]; // service time
@@ -113,11 +113,12 @@ public class SimpleLPTest {
 		double[] U = new double[N]; // upper bound of delivery time
 		double[] L = new double[N]; // lower bound of delivery time
 		double U2 = 60 * f;
+		double maxU = 100;
 		for (int i = 0; i < N; ++i) {
 			S[i] = 5;
 			w[i] = 0.3;
 			L[i] = 0;
-			U[i] = 100;
+			U[i] = maxU;
 		}
 		// variables
 		IloCplex cplex = new IloCplex();
@@ -131,7 +132,7 @@ public class SimpleLPTest {
 		for (int i = 0; i < N; ++i) {
 			for (int j = 0; j < N; ++j) {
 				for (int t = 0; t < TN; ++t) {
-					target.addTerm(T[i][j], X[(i * N + j) * TN + t]);
+					target.addTerm(T[i][j], X[(i * N + j) * N + t]);
 				}
 			}
 		}
@@ -145,24 +146,25 @@ public class SimpleLPTest {
 			target.addTerm(w[i], T2[i]);
 		}
 		cplex.addMinimize(target);
-		
+
 		// constraints
-		// (2) start time = 0
-		cplex.addEq(cplex.prod(1.0, T2[0]), 0, "Start Time");
-		// (3) \sum_t \sum_j X_ij = 1, (4) \sum_t \sum_j X_ji = 1
+		// (2) T_0 = 0
+		cplex.addEq(cplex.prod(1.0, T2[0]), 0, "(2)");
+		// (3) \sum_{t,j} X_{ijt} = 1, (4) sum_{t,j} X_{ijt} = sum_{t,j} X_{jit}
 		for (int i = 0; i < N; ++i) {
 			IloLinearNumExpr exp = cplex.linearNumExpr();
 			IloLinearNumExpr exp2 = cplex.linearNumExpr();
 			for (int j = 0; j < N; ++j) {
+				if (j == i) continue;
 				for (int t = 0; t < TN; ++t) {
 					exp.addTerm(1, X[(i * N + j) * TN + t]);
 					exp2.addTerm(1, X[(j * N + i) * TN + t]);
 				}
 			}
-			cplex.addEq(exp, 1);
-			cplex.addEq(exp2, 1);
+			cplex.addEq(exp, 1, String.format("(3):(i=%d)", i));
+			cplex.addEq(exp2, 1, String.format("(4):(i=%d)", i));
 		}
-		// (5) (6) (7) 
+		// (5) (6) (7)
 		for (int t = 0; t < TN; ++t) {
 			for (int i = 0; i < N; ++i) {
 				for (int j = 1; j < N; ++j) {
@@ -170,34 +172,39 @@ public class SimpleLPTest {
 					IloLinearNumExpr exp = cplex.linearNumExpr();
 					exp.addTerm(1, T2[j]);
 					exp.addTerm(-1, T2[i]);
-					exp.addTerm(-B, X[(i * N + j) * N + t]);
-					cplex.addGe(exp, T[i][j] + S[j] - B);
-					// (6) 
+					exp.addTerm(-B, X[(i * N + j) * TN + t]);
+					cplex.addGe(exp, T[i][j] + S[j] - B,
+							String.format("(5):(%d, %d, %d)", i, j, t));
+					// (6)
 					exp = cplex.linearNumExpr();
 					exp.addTerm(1, T2[i]);
-					exp.addTerm(B, X[(i * N + j) * N + t]);
-					cplex.addLe(exp, f * (t + 1) + B);
-					
-					// (7) 
+					exp.addTerm(B, X[(i * N + j) * TN + t]);
+					cplex.addLe(exp, f * (t + 1) + B,
+							String.format("(6):(%d, %d, %d)", i, j, t));
+
+					// (7)
 					exp = cplex.linearNumExpr();
 					exp.addTerm(1, T2[i]);
-					exp.addTerm(-f * t, X[i * N + j]);
-					cplex.addGe(exp, 0);
+					exp.addTerm(-f * t, X[(i * N + j) * TN + t]);
+					cplex.addGe(exp, 0,
+							String.format("(7):(%d, %d, %d)", i, j, t));
 				}
 			}
-			
+
 		}
 		// (8) (9)
 		for (int i = 0; i < N; ++i) {
 			IloLinearNumExpr exp = cplex.linearNumExpr();
 			exp.addTerm(1, T2[i]);
 			exp.addTerm(-B, Yu[i]);
-			cplex.addLe(exp, U[i]);
-			
+			cplex.addLe(exp, U[i],
+					String.format("(8):(%d)", i));
+
 			exp = cplex.linearNumExpr();
 			exp.addTerm(1, T2[i]);
 			exp.addTerm(B, Yl[i]);
-			cplex.addGe(exp, L[i]);
+			cplex.addGe(exp, L[i],
+					String.format("(9):(%d)", i));
 		}
 		if (cplex.solve()) {
 			cplex.output().println("Solution status = " + cplex.getStatus());
@@ -207,11 +214,12 @@ public class SimpleLPTest {
 			int ncols = X.length;
 			for (int j = 0; j < ncols; ++j)
 				if (val[j] > 0) {
-					int i1 = j / (N * N);
-					int i2 = (j - i1 * N * N) / N;
-					int i3 = j % N;
-					cplex.output().println(String.format("X[%d,%d,%d] = %.3f", 
-							i1, i2, i3, val[j]));
+					int i1 = j / (N * TN);
+					int i2 = (j - i1 * N * TN) / TN;
+					int i3 = j % TN;
+					cplex.output().println(
+							String.format("X[%d,%d,%d] = %.3f", i1, i2, i3,
+									val[j]));
 				}
 			// T
 			val = cplex.getValues(T2);
@@ -221,7 +229,7 @@ public class SimpleLPTest {
 			val = cplex.getValues(Yu);
 			for (int j = 0; j < Yu.length; ++j)
 				cplex.output().println(String.format("Yu%d = %.3f", j, val[j]));
-			
+
 			val = cplex.getValues(Yl);
 			for (int j = 0; j < Yl.length; ++j)
 				cplex.output().println(String.format("Yl%d = %.3f", j, val[j]));
