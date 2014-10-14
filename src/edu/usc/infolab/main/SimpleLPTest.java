@@ -103,7 +103,7 @@ public class SimpleLPTest {
 
 	public static void deliveryMIPTest() throws IloException, IOException {
 		double[][] T = DataRetrievalTest.getDistArray();
-		int N = 8;
+		int N = 6;
 		int TN = 30; // Time period number
 		double f = 15; // time period length
 		double P = 50; // penalty
@@ -113,7 +113,7 @@ public class SimpleLPTest {
 		double[] U = new double[N]; // upper bound of delivery time
 		double[] L = new double[N]; // lower bound of delivery time
 		double U2 = 60 * f;
-		double maxU = 100;
+		double maxU = 40;
 		for (int i = 0; i < N; ++i) {
 			S[i] = 5;
 			w[i] = 0.3;
@@ -155,7 +155,8 @@ public class SimpleLPTest {
 			IloLinearNumExpr exp = cplex.linearNumExpr();
 			IloLinearNumExpr exp2 = cplex.linearNumExpr();
 			for (int j = 0; j < N; ++j) {
-				if (j == i) continue;
+				if (j == i)
+					continue;
 				for (int t = 0; t < TN; ++t) {
 					exp.addTerm(1, X[(i * N + j) * TN + t]);
 					exp2.addTerm(1, X[(j * N + i) * TN + t]);
@@ -175,14 +176,14 @@ public class SimpleLPTest {
 					exp.addTerm(-B, X[(i * N + j) * TN + t]);
 					cplex.addGe(exp, T[i][j] + S[j] - B,
 							String.format("(5):(%d, %d, %d)", i, j, t));
-					// (6)
+					// (6) T_i + B * X{ijt} <= f * (t + 1) + B
 					exp = cplex.linearNumExpr();
 					exp.addTerm(1, T2[i]);
 					exp.addTerm(B, X[(i * N + j) * TN + t]);
 					cplex.addLe(exp, f * (t + 1) + B,
 							String.format("(6):(%d, %d, %d)", i, j, t));
 
-					// (7)
+					// (7) T_i >= f * t * X{ijt}
 					exp = cplex.linearNumExpr();
 					exp.addTerm(1, T2[i]);
 					exp.addTerm(-f * t, X[(i * N + j) * TN + t]);
@@ -192,48 +193,91 @@ public class SimpleLPTest {
 			}
 
 		}
-		// (8) (9)
 		for (int i = 0; i < N; ++i) {
+			// (8) T_i - B * Yu_i <= U_i, Upper bound constraint
 			IloLinearNumExpr exp = cplex.linearNumExpr();
 			exp.addTerm(1, T2[i]);
 			exp.addTerm(-B, Yu[i]);
-			cplex.addLe(exp, U[i],
-					String.format("(8):(%d)", i));
+			cplex.addLe(exp, U[i], String.format("(8):(%d)", i));
 
+			// (9) T_i + B * Yl_i >= L_i, Lower bound constraint
 			exp = cplex.linearNumExpr();
 			exp.addTerm(1, T2[i]);
 			exp.addTerm(B, Yl[i]);
-			cplex.addGe(exp, L[i],
-					String.format("(9):(%d)", i));
+			cplex.addGe(exp, L[i], String.format("(9):(%d)", i));
 		}
 		if (cplex.solve()) {
+
+			int[] deliverySeq = new int[N];
+			double[] departureTimes = new double[N];
+			int[][] violation = new int[2][N];
+			double objVal = cplex.getObjValue();
+			// Show and interpret the result
 			cplex.output().println("Solution status = " + cplex.getStatus());
-			cplex.output().println("Solution value = " + cplex.getObjValue());
+			// X[i,j,t]
 			double[] val = cplex.getValues(X);
-			// X
 			int ncols = X.length;
-			for (int j = 0; j < ncols; ++j)
-				if (val[j] > 0) {
-					int i1 = j / (N * TN);
-					int i2 = (j - i1 * N * TN) / TN;
-					int i3 = j % TN;
-					cplex.output().println(
-							String.format("X[%d,%d,%d] = %.3f", i1, i2, i3,
-									val[j]));
+			for (int col = 0; col < ncols; ++col)
+				if (val[col] > 0) {
+					int s = col / (N * TN);
+					int e = (col - s * N * TN) / TN;
+					int t = col % TN;
+					deliverySeq[s] = e;
+					// cplex.output().println(
+					// String.format("X[%d,%d,%d] = %.3f", s, e, t,
+					// val[col]));
 				}
-			// T
+			// T, departure times
 			val = cplex.getValues(T2);
-			for (int j = 0; j < T2.length; ++j)
-				cplex.output().println(String.format("T%d = %.3f", j, val[j]));
-			// bound
-			val = cplex.getValues(Yu);
-			for (int j = 0; j < Yu.length; ++j)
-				cplex.output().println(String.format("Yu%d = %.3f", j, val[j]));
+			for (int col = 0; col < T2.length; ++col) {
+				departureTimes[col] = val[col];
+				// cplex.output().println(
+				// String.format("T[%d] = %.3f", col, val[col]));
+			}
 
 			val = cplex.getValues(Yl);
-			for (int j = 0; j < Yl.length; ++j)
-				cplex.output().println(String.format("Yl%d = %.3f", j, val[j]));
+			for (int col = 0; col < Yl.length; ++col) {
+				violation[0][col] = (int) val[col];
+				// cplex.output().println(
+				// String.format("Yl[%d] = %.3f", col, val[col]));
+			}
+			// bound violation
+			val = cplex.getValues(Yu);
+			for (int col = 0; col < Yu.length; ++col) {
+				violation[1][col] = (int) val[col];
+				// cplex.output().println(
+				// String.format("Yu[%d] = %.3f", col, val[col]));
+			}
+
+			interpretResult(deliverySeq, departureTimes, violation, objVal);
 		}
 		cplex.end();
+		// interpret result
+	}
+
+	private static void interpretResult(int[] deliverySeq,
+			double[] departureTimes, int[][] violation, double objVal) {
+		// TODO Auto-generated method stub
+		// int N = deliverySeq.length;
+		int cur = 0, N = deliverySeq.length;
+		System.out.println("==========================================");
+		System.out.println(String.format("Objective Val: %.3f", objVal));
+		do {
+			System.out.println(String.format("%d->%d: %.3f", cur,
+					deliverySeq[cur], departureTimes[cur]));
+			cur = deliverySeq[cur];
+		} while (cur != 0);
+		// time window violation summary
+		System.out.println("Time window violation summary:");
+		for (int i = 0; i < N; ++i) {
+			if (violation[0][i] == 1) {
+				System.out.println(String.format(
+						"Lower bound of node %d is voilated.", i));
+			}
+			if (violation[1][i] == 1) {
+				System.out.println(String.format(
+						"Upper bound of node %d is voilated.", i));
+			}
+		}
 	}
 }
